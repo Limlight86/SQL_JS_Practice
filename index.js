@@ -1,61 +1,64 @@
 const PORT = process.env.PORT || 3000;
 
 const express = require('express');
+const pg = require('pg')
 
 const app = express();
+const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+
+db.query(`
+  CREATE TABLE IF NOT EXISTS tasks(
+    id SERIAL PRIMARY KEY,
+    description VARCHAR(128) NOT NULL,
+    completed BOOLEAN NOT NULL DEFAULT FALSE
+  );
+`)
 
 app.use(express.json());
 app.use(express.static('public'));
 
-let id = 0;
-
-const tasks = [];
-
 // Get the user a list of all the tasks
-app.get('/tasks', (_request, response) => {
-  response.json(tasks);
+app.get('/tasks', async (_request, response) => {
+  const result = await db.query(`SELECT * FROM tasks ORDER BY id DESC;`)
+  response.json(result.rows);
 });
 
 // Create a new task
-app.post('/tasks', (request, response) => {
+app.post('/tasks', async (request, response) => {
   // same as const description = request.body.description
   const { description } = request.body;
   if (!description) {
     response.status(406).json({ error: 'description required' });
   } else {
-    id += 1;
-    const newTask = {
-      id, // same as id: id
-      description, // same as description: description
-      completed: false,
-    };
-    tasks.unshift(newTask);
-    response.json(newTask);
+    const result = await db.query(`INSERT INTO tasks(description) VALUES($1) RETURNING *;`, [description])
+    response.json(result.rows[0]);
   }
 });
 
 // Update something about a specific task
-app.patch('/tasks/:id', (request, response) => {
+app.patch('/tasks/:id', async (request, response) => {
   const taskId = Number(request.params.id);
-  const taskToUpdate = tasks.find(task => task.id === taskId);
-  if (!taskToUpdate) {
+  const approvedColumns = ["description", "completed"]
+  const [column, value] = Object.entries(request.body)[0]
+  if (!approvedColumns.includes(column)){
+    return response.status(406).json({ error: 'No Hacky!' });
+  }
+  const result = await db.query(`UPDATE tasks SET ${column} = $1 WHERE id = $2 RETURNING *`, [value, taskId])
+  if (result.rows.length === 0) {
     response.status(404).json({ error: 'task ID not found' });
   } else {
-    Object.assign(taskToUpdate, request.body);
-    response.json(taskToUpdate);
+    response.json(result.rows[0]);
   }
 });
 
 // Delete a specific task
-app.delete('/tasks/:id', (request, response) => {
+app.delete('/tasks/:id', async (request, response) => {
   const taskId = Number(request.params.id);
-  const indexOfTaskToRemove = tasks.findIndex(task => task.id === taskId);
-  const taskToRemove = tasks[indexOfTaskToRemove];
-  if (!taskToRemove) {
+  const result = await db.query(`DELETE FROM tasks WHERE id=$1 RETURNING *`, [taskId])
+  if (result.rows.length === 0) {
     response.status(404).json({ error: 'no such task' });
   } else {
-    tasks.splice(indexOfTaskToRemove, 1);
-    response.json(taskToRemove);
+    response.json(result.rows[0]);  
   }
 });
 
